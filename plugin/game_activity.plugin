@@ -18,10 +18,10 @@ DEFAULT_STOP_CMD = ".stopgame"
 DEFAULT_CHANGE_CMD = ".changegame"
 
 __id__ = "game_activity_local"
-__name__ = "Game Activity (локально)"
+__name__ = "Game Activity"
 __description__ = "Локальный блок игровой активности: иконка, название, Playing, таймер"
-__author__ = "@generated"
-__version__ = "1.0.0"
+__author__ = "@h3sny"
+__version__ = "1.0.1"
 __min_version__ = "11.12.0"
 __icon__ = "xelivet_by_fStikBot/67"
 
@@ -32,17 +32,12 @@ class GameActivityPlugin(BasePlugin):
       - set_game(name) — выбрать игру и запустить таймер
       - stop_game() — остановить таймер и скрыть блок
       - change_game(name) — сменить игру (сброс таймера)
-    Управление через чат-команды:
-      .setgame <name>
-      .stopgame
-      .changegame <name>
     """
 
     def has_settings(self):
         return True
 
     def create_settings(self):
-        # Простые настройки для изменения команд (при желании)
         return [
             Header(text="Commands (chat)"),
             Input(key="set_cmd", text="Set game command", default=DEFAULT_SET_CMD),
@@ -50,7 +45,7 @@ class GameActivityPlugin(BasePlugin):
             Input(key="change_cmd", text="Change game command", default=DEFAULT_CHANGE_CMD),
             Divider(),
             Header(text="Notes"),
-            Input(key="icons_dir_hint", text="Icons directory (relative to plugin file). Default = icons/", default="icons")
+            Input(key="icons_dir_hint", text="Icons directory (relative to plugin file). Default = icons", default="icons")
         ]
 
     def on_plugin_load(self):
@@ -65,7 +60,6 @@ class GameActivityPlugin(BasePlugin):
         elif os.path.isdir(parent_icons):
             self.icons_dir = parent_icons
         else:
-            # случай, если папки нет — всё равно используем local_icons path (его можно создать)
             self.icons_dir = local_icons
 
         self._lock = threading.Lock()
@@ -76,27 +70,28 @@ class GameActivityPlugin(BasePlugin):
         self.state = {"active": False, "name": None, "start_ts": None}
         self._load_state()
 
-        # Регистрируем хук на отправку сообщений (как в примере lichess_invite)
+        # Регистрируем хук на отправку сообщений
         try:
             self.add_on_send_message_hook()
         except Exception:
-            # some clients may use different registration; log and continue
             pass
 
         log("game_activity plugin loaded")
 
+        # ДОП: логируем доступные API для диагностики
+        try:
+            self._log_available_apis()
+        except Exception:
+            pass
+
         # Если ранее была активная игра — возобновляем блок/таймер
         if self.state.get("active") and self.state.get("name") and self.state.get("start_ts"):
-            # показать блок и запустить таймер
             self._show_block_resume()
 
     # --------------------------
     # Public API methods
     # --------------------------
     def set_game(self, name: str):
-        """
-        Выбрать игру и запустить таймер (сброс времени).
-        """
         with self._lock:
             self.state["name"] = name
             self.state["start_ts"] = datetime.now(timezone.utc).timestamp()
@@ -106,14 +101,10 @@ class GameActivityPlugin(BasePlugin):
             title = name
             status_text = "Playing"
             timer_text = self._format_elapsed(0)
-            # Показать блок в UI клиента
             self._client_show_block(icon, title, status_text, timer_text)
             self._start_timer_thread()
 
     def stop_game(self):
-        """
-        Остановить таймер и скрыть блок.
-        """
         with self._lock:
             self.state["active"] = False
             self.state["name"] = None
@@ -123,16 +114,12 @@ class GameActivityPlugin(BasePlugin):
             self._client_hide_block()
 
     def change_game(self, name: str):
-        """
-        Сменить игру (аналогично set_game).
-        """
         self.set_game(name)
 
     # --------------------------
     # Message hook — команды в чате
     # --------------------------
     def on_send_message_hook(self, account: int, params: Any) -> HookResult:
-        # params.message expected to be str
         if not isinstance(params.message, str):
             return HookResult()
 
@@ -142,20 +129,16 @@ class GameActivityPlugin(BasePlugin):
         change_cmd = self.get_setting("change_cmd", DEFAULT_CHANGE_CMD).strip()
 
         lower = text.lower()
-        # .setgame <name>
         if lower.startswith(set_cmd):
             parts = text.split(maxsplit=1)
             if len(parts) == 2 and parts[1].strip():
                 name = parts[1].strip()
                 run_on_queue(lambda: self.set_game(name))
-                # скрываем исходное сообщение (поведение как в примере — cancel)
                 return HookResult(strategy=HookStrategy.CANCEL)
             else:
-                # можно показать подсказку (через лог)
                 log("Usage: {} <game name>".format(set_cmd))
                 return HookResult()
 
-        # .changegame <name>
         if lower.startswith(change_cmd):
             parts = text.split(maxsplit=1)
             if len(parts) == 2 and parts[1].strip():
@@ -166,7 +149,6 @@ class GameActivityPlugin(BasePlugin):
                 log("Usage: {} <game name>".format(change_cmd))
                 return HookResult()
 
-        # .stopgame
         if lower == stop_cmd:
             run_on_queue(lambda: self.stop_game())
             return HookResult(strategy=HookStrategy.CANCEL)
@@ -177,21 +159,14 @@ class GameActivityPlugin(BasePlugin):
     # Internal: icon search / formatting / timer
     # --------------------------
     def _find_icon_for_game(self, name: str) -> str:
-        """
-        Поиск иконки в icons_dir.
-        Поддерживаются расширения: png, jpg, jpeg, webp, svg.
-        Возвращает путь или пустую строку.
-        """
         if not name:
             return ""
-        # попытки в разных вариантах
         candidates = []
         if os.path.isdir(self.icons_dir):
             for ext in ("png", "jpg", "jpeg", "webp", "svg"):
                 path = os.path.join(self.icons_dir, f"{name}.{ext}")
                 if os.path.isfile(path):
                     candidates.append(path)
-            # try lowercase/underscored
             safe = name.lower().replace(" ", "_")
             for ext in ("png", "jpg", "jpeg", "webp", "svg"):
                 path = os.path.join(self.icons_dir, f"{safe}.{ext}")
@@ -230,13 +205,10 @@ class GameActivityPlugin(BasePlugin):
                     break
                 elapsed = time.time() - float(self.state["start_ts"])
                 timer_text = self._format_elapsed(elapsed)
-            # Обновляем UI
             try:
                 self._client_update_block(timer_text)
             except Exception:
-                # игнорируем ошибки адаптера
                 pass
-            # интервал ~1s, но прерываемся чаще для отзывчивости
             for _ in range(10):
                 if self._stop_event.is_set():
                     break
@@ -256,17 +228,68 @@ class GameActivityPlugin(BasePlugin):
         self._start_timer_thread()
 
     # --------------------------
-    # Client UI integration (attempts common API names, fallback to log)
+    # Debug / API detection
     # --------------------------
+    def _log_available_apis(self):
+        """
+        Логируем доступные атрибуты self и client для диагностики.
+        Вывод читается мной, чтобы адаптировать вызовы.
+        """
+        try:
+            client = getattr(self, "client", None)
+            log("[game_activity][API DETECT] self attributes:")
+            try:
+                sa = sorted([a for a in dir(self) if not a.startswith("_")])
+                log(f"[game_activity][API DETECT] self: {', '.join(sa)}")
+            except Exception:
+                pass
+
+            if client is None:
+                log("[game_activity][API DETECT] no self.client attribute")
+            else:
+                try:
+                    ca = sorted([a for a in dir(client) if not a.startswith("_")])
+                    log(f"[game_activity][API DETECT] client attrs: {', '.join(ca)}")
+                except Exception:
+                    log("[game_activity][API DETECT] cannot list client attrs")
+            # попробуем обнаружить популярные имена методов и залогировать их
+            candidate_names = [
+                "set_local_profile_card", "create_local_profile_card", "update_local_profile_card", "remove_local_profile_card",
+                "setProfileCard", "createProfileCard", "updateProfileCard", "removeProfileCard",
+                "set_profile_card", "create_profile_card", "update_profile_card", "remove_profile_card",
+                "set_profile", "setProfile", "set_user_card", "show_local_card", "set_custom_status", "set_status", "set_bio", "setBio"
+            ]
+            found = []
+            for name in candidate_names:
+                if hasattr(self, name) or (client and hasattr(client, name)):
+                    found.append(name)
+            log(f"[game_activity][API DETECT] candidate methods found: {', '.join(found) if found else '(none)'}")
+        except Exception as e:
+            log(f"[game_activity][API DETECT] detection error: {e}")
+
+    # --------------------------
+    # Client UI integration (расширенные попытки)
+    # --------------------------
+    def _safe_call(self, obj, name, *args, **kwargs):
+        """
+        Безопасно вызывает obj.name(*args, **kwargs) если доступно.
+        Логирует попытку и результат/исключение.
+        Возвращает (True, result) если вызов выполнен без исключения, иначе (False, None).
+        """
+        try:
+            func = getattr(obj, name, None)
+            if callable(func):
+                log(f"[game_activity][CALL ATTEMPT] calling {obj}.{name} with args={args} kwargs={kwargs}")
+                res = func(*args, **kwargs)
+                log(f"[game_activity][CALL ATTEMPT] {name} returned: {type(res)}")
+                return True, res
+            else:
+                return False, None
+        except Exception as e:
+            log(f"[game_activity][CALL ATTEMPT] {name} raised: {e}")
+            return False, None
+
     def _client_show_block(self, icon_path: str, title: str, status_text: str, timer_text: str):
-        """
-        Попытка создать локальный профильный блок через типичные имена API.
-        Поддерживаемые варианты (попробуем по порядку):
-          - self.set_local_profile_card(dict)
-          - self.client.set_local_profile_card(dict)
-          - global function set_local_profile_card (если доступна)
-        Если ничего не найдено — логируем (fallback).
-        """
         payload = {
             "id": "local_game_activity_block",
             "icon": icon_path or "",
@@ -274,103 +297,105 @@ class GameActivityPlugin(BasePlugin):
             "text": status_text or "",
             "right_text": timer_text or ""
         }
+        # 1) try methods on self
+        tried = False
+        for name in ("set_local_profile_card", "create_local_profile_card", "set_profile_card", "create_profile_card", "setProfileCard"):
+            ok, _ = self._safe_call(self, name, payload)
+            if ok:
+                tried = True
+                break
+        if tried:
+            return
+
+        # 2) try on client object
+        client = getattr(self, "client", None)
+        if client:
+            for name in ("set_local_profile_card", "create_local_profile_card", "create_local_profile_card", "setProfileCard", "createProfileCard", "show_local_card", "set_profile"):
+                ok, _ = self._safe_call(client, name, payload)
+                if ok:
+                    tried = True
+                    break
+        if tried:
+            return
+
+        # 3) try global helpers in client_utils
         try:
-            # 1) метод в самом плагине (в некоторых реализациях)
-            if hasattr(self, "set_local_profile_card"):
-                try:
-                    self.set_local_profile_card(payload)
-                    return
-                except Exception:
-                    pass
-            # 2) объект client (часто доступен)
-            client = getattr(self, "client", None)
-            if client:
-                if hasattr(client, "set_local_profile_card"):
-                    try:
-                        client.set_local_profile_card(payload)
-                        return
-                    except Exception:
-                        pass
-                # некоторые клиенты предоставляют create_local_profile_card
-                if hasattr(client, "create_local_profile_card"):
-                    try:
-                        client.create_local_profile_card(payload)
-                        return
-                    except Exception:
-                        pass
-            # 3) глобальные функции (редко)
-            try:
-                from client_utils import set_local_profile_card as global_set
-                global_set(payload)
-                return
-            except Exception:
-                pass
+            import client_utils as cu
+            for name in ("set_local_profile_card", "create_local_profile_card", "set_profile_card"):
+                ok, _ = self._safe_call(cu, name, payload)
+                if ok:
+                    tried = True
+                    break
         except Exception:
             pass
 
         # fallback: лог
-        log(f"[game_activity] show: {title} | {status_text} | {timer_text} | icon={icon_path}")
+        log(f"[game_activity] show fallback -> {title} | {status_text} | {timer_text} | icon={icon_path}")
 
     def _client_update_block(self, timer_text: str):
-        """
-        Попытка обновить только правый текст/таймер блока.
-        """
+        fields = {"right_text": timer_text}
+        tried = False
+        for name in ("update_local_profile_card", "updateProfileCard", "update_profile_card"):
+            ok, _ = self._safe_call(self, name, "local_game_activity_block", fields)
+            if ok:
+                tried = True
+                break
+        if tried:
+            return
+
+        client = getattr(self, "client", None)
+        if client:
+            for name in ("update_local_profile_card", "updateProfileCard", "update_profile_card"):
+                ok, _ = self._safe_call(client, name, "local_game_activity_block", fields)
+                if ok:
+                    tried = True
+                    break
+        if tried:
+            return
+
         try:
-            if hasattr(self, "update_local_profile_card"):
-                try:
-                    self.update_local_profile_card("local_game_activity_block", {"right_text": timer_text})
-                    return
-                except Exception:
-                    pass
-            client = getattr(self, "client", None)
-            if client:
-                if hasattr(client, "update_local_profile_card"):
-                    try:
-                        client.update_local_profile_card("local_game_activity_block", {"right_text": timer_text})
-                        return
-                    except Exception:
-                        pass
-            # глобальная попытка
-            try:
-                from client_utils import update_local_profile_card as global_update
-                global_update("local_game_activity_block", {"right_text": timer_text})
-                return
-            except Exception:
-                pass
+            import client_utils as cu
+            for name in ("update_local_profile_card", "update_profile_card"):
+                ok, _ = self._safe_call(cu, name, "local_game_activity_block", fields)
+                if ok:
+                    tried = True
+                    break
         except Exception:
             pass
 
-        # fallback: лог
-        log(f"[game_activity] update timer: {timer_text}")
+        log(f"[game_activity] update fallback -> timer={timer_text}")
 
     def _client_hide_block(self):
-        """
-        Удалить локальный блок.
-        """
+        tried = False
+        for name in ("remove_local_profile_card", "removeProfileCard", "remove_profile_card"):
+            ok, _ = self._safe_call(self, name, "local_game_activity_block")
+            if ok:
+                tried = True
+                break
+        if tried:
+            return
+
+        client = getattr(self, "client", None)
+        if client:
+            for name in ("remove_local_profile_card", "removeProfileCard", "remove_profile_card"):
+                ok, _ = self._safe_call(client, name, "local_game_activity_block")
+                if ok:
+                    tried = True
+                    break
+        if tried:
+            return
+
         try:
-            if hasattr(self, "remove_local_profile_card"):
-                try:
-                    self.remove_local_profile_card("local_game_activity_block")
-                    return
-                except Exception:
-                    pass
-            client = getattr(self, "client", None)
-            if client and hasattr(client, "remove_local_profile_card"):
-                try:
-                    client.remove_local_profile_card("local_game_activity_block")
-                    return
-                except Exception:
-                    pass
-            try:
-                from client_utils import remove_local_profile_card as global_remove
-                global_remove("local_game_activity_block")
-                return
-            except Exception:
-                pass
+            import client_utils as cu
+            for name in ("remove_local_profile_card", "remove_profile_card"):
+                ok, _ = self._safe_call(cu, name, "local_game_activity_block")
+                if ok:
+                    tried = True
+                    break
         except Exception:
             pass
 
-        log("[game_activity] hide block")
+        log("[game_activity] hide fallback")
 
     # --------------------------
     # State persistence
