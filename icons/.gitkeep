@@ -1,1 +1,7 @@
+# Положите сюда иконки игр, например:
+# icons/AmongUs.png
+# icons/CSGO.png
+# icons/Cyberpunk2077.png
+#
+# Имена файлов должны совпадать с именем игры, которое вы передаёте в .setgame <name>
 
