@@ -1,0 +1,10 @@
+{
+  "id": "game-activity-local",
+  "name": "Local Game Activity",
+  "version": "1.0.0",
+  "author": "@h3sny",
+  "description": "Локальный блок игровой активности (иконка, название, Playing, таймер). Работает локально на устройстве, не меняет серверный профиль.",
+  "entry": "plugin/game_activity.py",
+  "platforms": ["pc", "android"],
+  "permissions": ["storage", "ui-local-block"] 
+}
